@@ -30,6 +30,7 @@ __all__ = [
     'Products',
     'Recommendations',
     'Sellers',
+    'MerchantFulfillment',
 ]
 
 # See https://images-na.ssl-images-amazon.com/images/G/01/mwsportal/doc/en_US/bde/MWSDeveloperGuide._V357736853_.pdf page 8
@@ -579,7 +580,159 @@ class Sellers(MWS):
         return self.make_request(data)
 
 
-#### Fulfillment APIs ####
+class MerchantFulfillment(MWS):
+    URI = "/MerchantFulfillment/2015-06-01"
+    VERSION = '2015-06-01'
+    NS = "{https://mws.amazonservices.com/MerchantFulfillment/2015-06-01}"
+
+    def _build_shipment_request_details(
+            self, amazon_order_id, origin_address, weight, weight_unit, ship_date,
+            item_list, dimensions, dimensions_unit, declared_value, declared_currency, is_pickup,
+            confirmation_type, **kwargs
+    ):
+        """ Build the shipment request detail
+
+        :param amazon_order_id: An Amazon-defined order identifier in 3-7-7 format.
+        :param origin_address: An address dictionary containing the following keys
+        name, addressline1, city, state, postal_code, country_code, email, phone
+        :param weight: The package weight.
+        :param weight_unit: The package weight unit
+        :param ship_date: When used in a request, this is the date that the seller wants to ship the package.
+        When used in a response, this is the date that the package can be shipped by the indicated method.
+        :param item_list: List of tuples containing element of the format [(item_id1, quantity1), ...]
+        :param dimensions: The package dimensions. {'length': <LENGTH>, 'width': <WIDTH>, 'height': <HEIGHT>}
+        :param dimensions_unit : Unit of dimensions
+        :param declared_value: The declared value amount of the shipment.
+        :param declared_currency: Three-digit currency code.
+        :param is_pickup: Indicates whether the carrier will pick up the package.
+        Note: Scheduled carrier pickup is available only in the US using Dynamex.
+        :param confirmation_type: The delivery confirmation level.
+        """
+        assert dimensions_unit in ['centimeters', 'inches']
+        assert confirmation_type in [
+            'NoTracking', 'DeliveryConfirmationWithoutSignature',
+            'DeliveryConfirmationWithSignature', 'DeliveryConfirmationWithAdultSignature'
+        ]
+        shipment_request_dict = {
+            'ShipmentRequestDetails.AmazonOrderId': str(amazon_order_id),
+            'ShipmentRequestDetails.Weight.Value': str(weight),
+            'ShipmentRequestDetails.Weight.Unit': weight_unit,
+            'ShipmentRequestDetails.ShipDate': ship_date,
+            'ShipmentRequestDetails.ShipFromAddress.Name': origin_address['name'],
+            'ShipmentRequestDetails.ShipFromAddress.AddressLine1': origin_address['addressline_1'],
+            'ShipmentRequestDetails.ShipFromAddress.City': origin_address['city'],
+            'ShipmentRequestDetails.ShipFromAddress.StateOrProvinceCode': origin_address['state_or_province_code'],
+            'ShipmentRequestDetails.ShipFromAddress.PostalCode': origin_address['postal_code'],
+            'ShipmentRequestDetails.ShipFromAddress.CountryCode': origin_address['country_code'],
+            'ShipmentRequestDetails.ShipFromAddress.Email': origin_address['email'],
+            'ShipmentRequestDetails.ShipFromAddress.Phone': origin_address['phone'],
+            'ShipmentRequestDetails.ShipFromAddress.PackageDimensions.Length': str(dimensions['length']),
+            'ShipmentRequestDetails.PackageDimensions.Width': str(dimensions['width']),
+            'ShipmentRequestDetails.PackageDimensions.Height': str(dimensions['height']),
+            'ShipmentRequestDetails.PackageDimensions.Unit': dimensions_unit,
+            'ShipmentRequestDetails.ShippingServiceOptions.CarrierWillPickUp': str(is_pickup).lower(),
+            'ShipmentRequestDetails.ShippingServiceOptions.DeliveryExperience': confirmation_type,
+            'ShipmentRequestDetails.ShippingServiceOptions.DeclaredValue.CurrencyCode': declared_currency,
+            'ShipmentRequestDetails.ShippingServiceOptions.DeclaredValue.Amount': str(declared_value),
+        }
+        for index, (item_id, quantity) in enumerate(item_list, start=1):
+            shipment_request_dict['ShipmentRequestDetails.ItemList.Item.%d.OrderItemId' % index] = str(item_id)
+            shipment_request_dict['ShipmentRequestDetails.ItemList.Item.%d.Quantity' % index] = str(quantity)
+        return shipment_request_dict
+
+
+    def get_eligible_shipping_services(
+            self, amazon_order_id, origin_address, weight, weight_unit, ship_date,
+            item_list, dimensions, dimensions_unit, declared_value, declared_currency, is_pickup,
+            confirmation_type, **kwargs
+    ):
+        """ The GetEligibleShippingServices operation returns a list of shipping service offers that satisfy
+        the shipment request details that you specify
+
+        :param amazon_order_id: An Amazon-defined order identifier in 3-7-7 format.
+        :param origin_address: An address dictionary containing the following keys
+        name, addressline1, city, state, postal_code, country_code, email, phone
+        :param weight: The package weight.
+        :param weight_unit: The package weight unit
+        :param ship_date: When used in a request, this is the date that the seller wants to ship the package.
+        When used in a response, this is the date that the package can be shipped by the indicated method.
+        :param item_list: List of tuples containing element of the format [(item_id1, quantity1), ...]
+        :param dimensions: The package dimensions. {'length': <LENGTH>, 'width': <WIDTH>, 'height': <HEIGHT>}
+        :param dimensions_unit : Unit of dimensions
+        :param declared_value: The declared value amount of the shipment.
+        :param declared_currency: Three-digit currency code.
+        :param is_pickup: Indicates whether the carrier will pick up the package.
+        Note: Scheduled carrier pickup is available only in the US using Dynamex.
+        :param confirmation_type: The delivery confirmation level.
+        """
+        shipment_request_dict = self._build_shipment_request_details(
+            amazon_order_id, origin_address, weight, weight_unit, ship_date,
+            item_list, dimensions, declared_value, declared_currency, is_pickup,
+            confirmation_type, **kwargs
+        )
+        shipment_request_dict['Action'] = 'GetEligibleShippingServices'
+        return self.make_request(shipment_request_dict)
+
+    def create_shipment(
+            self, amazon_order_id, origin_address, weight, weight_unit, ship_date,
+            item_list, dimensions, dimensions_unit, declared_value, declared_currency, is_pickup,
+            confirmation_type, shipping_service_id, **kwargs
+    ):
+        """ The CreateShipment operation purchases shipping and returns PDF, PNG, or ZPL document data
+        for a shipping label, depending on the carrier. Amazon compresses the document data before
+        returning it as a Base64-encoded string.
+
+        :param amazon_order_id: An Amazon-defined order identifier in 3-7-7 format.
+        :param origin_address: An address dictionary containing the following keys
+        name, addressline1, city, state, postal_code, country_code, email, phone
+        :param weight: The package weight.
+        :param weight_unit: The package weight unit
+        :param ship_date: When used in a request, this is the date that the seller wants to ship the package.
+        When used in a response, this is the date that the package can be shipped by the indicated method.
+        :param item_list: List of tuples containing element of the format [(item_id1, quantity1), ...]
+        :param dimensions: The package dimensions. {'length': <LENGTH>, 'width': <WIDTH>, 'height': <HEIGHT>}
+        :param dimensions_unit : Unit of dimensions
+        :param declared_value: The declared value amount of the shipment.
+        :param declared_currency: Three-digit currency code.
+        :param is_pickup: Indicates whether the carrier will pick up the package.
+        Note: Scheduled carrier pickup is available only in the US using Dynamex.
+        :param confirmation_type: The delivery confirmation level.
+        :param shipping_service_id: An Amazon-defined shipping service identifier.
+        Get the ShippingServiceId value from a previous call to the GetEligibleShippingServices operation.
+        """
+        shipment_request_dict = self._build_shipment_request_details(
+            amazon_order_id, origin_address, weight, weight_unit, ship_date,
+            item_list, dimensions, declared_value, declared_currency, is_pickup,
+            confirmation_type, **kwargs
+        )
+        shipment_request_dict['Action'] = 'CreateShipment'
+        shipment_request_dict['ShippingServiceId'] = str(shipping_service_id)
+        return self.make_request(shipment_request_dict, 'POST')
+
+
+    def get_shipment(self, shipment_id):
+        """The GetShipment operation returns an existing shipment for the ShipmentId value that you specify.
+
+        :param shipment_id: An Amazon-defined shipment identifier.
+        """
+        data = dict(
+            Action='GetShipment',
+            ShipmentId=str(shipment_id)
+        )
+        return self.make_request(data)
+
+
+    def cancel_shipment(self, shipment_id):
+        """The CancelShipment operation cancels an existing shipment and requests a
+        refund for the ShipmentId value that you specify.
+
+        :param shipment_id: An Amazon-defined shipment identifier.
+        """
+        data = dict(
+            Action='CancelShipment',
+            ShipmentId=str(shipment_id)
+        )
+        return self.make_request(data, 'POST')
 
 
 class InboundShipments(MWS):
